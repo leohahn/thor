@@ -1,3 +1,4 @@
+use log::trace;
 use std::ops::{AddAssign, MulAssign, Neg};
 use std::str;
 
@@ -223,6 +224,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing i8");
         let num = self.parse_bencoding_num_signed()?;
         visitor.visit_i8(num)
     }
@@ -231,6 +233,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing i16");
         let num = self.parse_bencoding_num_signed()?;
         visitor.visit_i16(num)
     }
@@ -239,6 +242,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing i32");
         let num = self.parse_bencoding_num_signed()?;
         visitor.visit_i32(num)
     }
@@ -247,6 +251,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing i64");
         let num = self.parse_bencoding_num_signed()?;
         visitor.visit_i64(num)
     }
@@ -255,6 +260,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing u8");
         let num = self.parse_bencoding_num_unsigned()?;
         visitor.visit_u8(num)
     }
@@ -263,6 +269,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing u16");
         let num = self.parse_bencoding_num_unsigned()?;
         visitor.visit_u16(num)
     }
@@ -271,6 +278,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing u32");
         let num = self.parse_bencoding_num_unsigned()?;
         visitor.visit_u32(num)
     }
@@ -279,6 +287,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing u64");
         let num = self.parse_bencoding_num_unsigned()?;
         visitor.visit_u64(num)
     }
@@ -303,6 +312,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing char");
         // Parse a string, check that it is one character, call `visit_char`.
         let byte_string = self.parse_byte_string()?;
         let string = std::str::from_utf8(byte_string).map_err(|_e| Error::ExpectedChar)?;
@@ -327,8 +337,10 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing str");
         let byte_string = self.parse_byte_string()?;
         if let Ok(string) = str::from_utf8(byte_string) {
+            trace!("    str = {}", string);
             visitor.visit_borrowed_str(string)
         } else {
             Err(Error::ExpectedString)
@@ -339,6 +351,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing string");
         self.deserialize_str(visitor)
     }
 
@@ -348,6 +361,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing bytes");
         let byte_string = self.parse_byte_string()?;
         visitor.visit_bytes(byte_string)
     }
@@ -356,6 +370,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing byte buf");
         let byte_string = self.parse_byte_string()?;
         visitor.visit_bytes(byte_string)
     }
@@ -372,6 +387,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing option");
         visitor.visit_some(self)
     }
 
@@ -398,6 +414,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing newtype struct");
         visitor.visit_newtype_struct(self)
     }
 
@@ -408,6 +425,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing seq");
         // Parse the opening bracket of the sequence.
         if self.next_byte()? == b'l' {
             // Give the visitor access to each element of the sequence.
@@ -433,6 +451,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing tuple");
         self.deserialize_seq(visitor)
     }
 
@@ -446,6 +465,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing tuple struct");
         self.deserialize_seq(visitor)
     }
 
@@ -456,6 +476,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing map");
         // Parse the opening brace of the map.
         if self.next_byte()? == b'd' {
             // Give the visitor access to each entry of the map.
@@ -479,25 +500,27 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     // the fields cannot be known ahead of time is probably a map.
     fn deserialize_struct<V>(
         self,
-        _name: &'static str,
+        name: &'static str,
         _fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing struct {}", name);
         self.deserialize_map(visitor)
     }
 
     fn deserialize_enum<V>(
         self,
-        _name: &'static str,
+        name: &'static str,
         _variants: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing enum {}", name);
         match self.peek_byte()? {
             b'0'..=b'9' => visitor.visit_enum(self.parse_string()?.into_deserializer()),
             b'd' => {
@@ -521,6 +544,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing identifier");
         self.deserialize_str(visitor)
     }
 
@@ -539,6 +563,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
+        trace!("Deserializing ignored any");
         self.deserialize_any(visitor)
     }
 }

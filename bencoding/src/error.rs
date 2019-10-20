@@ -18,6 +18,7 @@ pub enum Error {
     ExpectedMapEnd,
     ExpectedArrayEnd,
     ExpectedEnum,
+    ExpectedSequence,
 }
 
 impl serde::ser::Error for Error {
@@ -55,6 +56,7 @@ impl std::error::Error for Error {
             Error::ExpectedMapEnd => "expected end of map",
             Error::ExpectedArrayEnd => "expected end of array",
             Error::ExpectedEnum => "expected enum",
+            Error::ExpectedSequence => "expected list or bytes",
         }
     }
 }

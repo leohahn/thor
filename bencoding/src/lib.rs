@@ -1,3 +1,4 @@
+extern crate log;
 extern crate serde;
 
 mod de;
