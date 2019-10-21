@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use log::trace;
 use serde::{ser, Serialize};
 use std::io::Write;
 
@@ -27,48 +28,48 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     type SerializeStructVariant = Self;
 
     fn serialize_bool(self, v: bool) -> Result<()> {
-        println!("Serializing bool");
+        trace!("Serializing bool");
         self.serialize_i64(i64::from(v))
     }
 
     fn serialize_i8(self, v: i8) -> Result<()> {
-        println!("Serializing i8");
+        trace!("Serializing i8");
         self.serialize_i64(i64::from(v))
     }
 
     fn serialize_i16(self, v: i16) -> Result<()> {
-        println!("Serializing i16");
+        trace!("Serializing i16");
         self.serialize_i64(i64::from(v))
     }
 
     fn serialize_i32(self, v: i32) -> Result<()> {
-        println!("Serializing i32");
+        trace!("Serializing i32");
         self.serialize_i64(i64::from(v))
     }
 
     fn serialize_i64(self, v: i64) -> Result<()> {
         // TODO: probably not that efficient
-        println!("Serializing i64");
+        trace!("Serializing i64");
         Ok(write!(&mut self.output, "i{}e", v).unwrap())
     }
 
     fn serialize_u8(self, v: u8) -> Result<()> {
-        println!("Serializing u8");
+        trace!("Serializing u8");
         self.serialize_u64(u64::from(v))
     }
 
     fn serialize_u16(self, v: u16) -> Result<()> {
-        println!("Serializing u16");
+        trace!("Serializing u16");
         self.serialize_u64(u64::from(v))
     }
 
     fn serialize_u32(self, v: u32) -> Result<()> {
-        println!("Serializing u32");
+        trace!("Serializing u32");
         self.serialize_u64(u64::from(v))
     }
 
     fn serialize_u64(self, v: u64) -> Result<()> {
-        println!("Serializing u64");
+        trace!("Serializing u64");
         // TODO: probably not that efficient
         Ok(write!(&mut self.output, "i{}e", v).unwrap())
     }
@@ -82,17 +83,17 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_char(self, v: char) -> Result<()> {
-        println!("Serializing char");
+        trace!("Serializing char");
         self.serialize_str(&v.to_string())
     }
 
     fn serialize_str(self, v: &str) -> Result<()> {
-        println!("Serializing str: {}", v);
+        trace!("Serializing str: {}", v);
         self.serialize_bytes(v.as_bytes())
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<()> {
-        println!("Serializing bytes");
+        trace!("Serializing bytes");
         write!(&mut self.output, "{}:", v.len()).unwrap();
         self.output.write(v).unwrap();
         Ok(())
@@ -100,7 +101,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
 
     fn serialize_none(self) -> Result<()> {
         // there is no representation of None in bencoding, so we just ignore it
-        println!("Serializing none");
+        trace!("Serializing none");
         Ok(())
     }
 
@@ -108,18 +109,18 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        println!("Serializing some");
+        trace!("Serializing some");
         value.serialize(self)
     }
 
     fn serialize_unit(self) -> Result<()> {
         // there is no representation of Unit in bencoding, so we just ignore it
-        println!("Serializing unit");
+        trace!("Serializing unit");
         Ok(())
     }
 
     fn serialize_unit_struct(self, _name: &'static str) -> Result<()> {
-        println!("Serializing unit struct");
+        trace!("Serializing unit struct");
         self.serialize_unit()
     }
 
@@ -129,7 +130,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         _variant_index: u32,
         variant: &'static str,
     ) -> Result<()> {
-        println!("Serializing unit variant");
+        trace!("Serializing unit variant");
         self.serialize_str(variant)
     }
 
@@ -137,7 +138,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        println!("Serializing new type struct");
+        trace!("Serializing new type struct");
         value.serialize(self)
     }
 
@@ -151,7 +152,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        println!("Serializing new type variant");
+        trace!("Serializing new type variant");
         use ser::SerializeMap;
         let mut map: Self::SerializeMap = self.serialize_map(None)?;
         map.serialize_key(variant)?;
@@ -160,13 +161,13 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq> {
-        println!("Serializing seq");
+        trace!("Serializing seq");
         self.output.write(b"l").unwrap();
         Ok(self)
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple> {
-        println!("Serializing tuple");
+        trace!("Serializing tuple");
         self.output.write(b"l").unwrap();
         Ok(self)
     }
@@ -177,7 +178,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         _name: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleStruct> {
-        println!("Serialize tuple struct");
+        trace!("Serialize tuple struct");
         self.serialize_seq(Some(len))
     }
 
@@ -190,7 +191,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleVariant> {
-        println!("Serializing tuple variant");
+        trace!("Serializing tuple variant");
         self.output.write(b"d").unwrap();
         variant.serialize(&mut *self)?;
         self.output.write(b"l").unwrap();
@@ -198,13 +199,13 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
-        println!("Serializing map");
+        trace!("Serializing map");
         self.output.write(b"d").unwrap();
         Ok(self)
     }
 
     fn serialize_struct(self, _name: &'static str, len: usize) -> Result<Self::SerializeStruct> {
-        println!("Serializing struct");
+        trace!("Serializing struct");
         self.serialize_map(Some(len))
     }
 
@@ -217,7 +218,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant> {
-        println!("Serializing struct variant");
+        trace!("Serializing struct variant");
         self.output.write(b"d").unwrap();
         variant.serialize(&mut *self)?;
         self.output.write(b"d").unwrap();
@@ -305,7 +306,7 @@ impl<'a> ser::SerializeMap for &'a mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        println!("Serializing key");
+        trace!("Serializing key");
         key.serialize(&mut **self)
     }
 
@@ -316,7 +317,7 @@ impl<'a> ser::SerializeMap for &'a mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        println!("Serializing value");
+        trace!("Serializing value");
         value.serialize(&mut **self)
     }
 
