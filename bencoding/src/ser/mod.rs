@@ -3,8 +3,11 @@ use log::trace;
 use serde::{ser, Serialize};
 use std::io::Write;
 
+mod map;
+mod utils;
+
 pub struct Serializer {
-    output: Vec<u8>,
+    pub output: Vec<u8>,
 }
 
 pub fn to_bytes<T>(value: &T) -> Result<Vec<u8>>
@@ -23,7 +26,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     type SerializeTuple = Self;
     type SerializeTupleStruct = Self;
     type SerializeTupleVariant = Self;
-    type SerializeMap = Self;
+    type SerializeMap = map::MapSerializer;
     type SerializeStruct = Self;
     type SerializeStructVariant = Self;
 
@@ -50,7 +53,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     fn serialize_i64(self, v: i64) -> Result<()> {
         // TODO: probably not that efficient
         trace!("Serializing i64");
-        Ok(write!(&mut self.output, "i{}e", v).unwrap())
+        Ok(utils::write_integer(&mut self.output, v))
     }
 
     fn serialize_u8(self, v: u8) -> Result<()> {
@@ -70,8 +73,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
 
     fn serialize_u64(self, v: u64) -> Result<()> {
         trace!("Serializing u64");
-        // TODO: probably not that efficient
-        Ok(write!(&mut self.output, "i{}e", v).unwrap())
+        Ok(utils::write_unsigned(&mut self.output, v))
     }
 
     fn serialize_f32(self, _v: f32) -> Result<()> {
