@@ -38,7 +38,6 @@ struct InfoDict {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct MetaInfo {
-    // DO NOT REORDER THE KEYS
     announce: String,
     #[serde(rename = "announce-list", skip_serializing_if = "Option::is_none")]
     announce_list: Option<Vec<Vec<String>>>,

@@ -3,20 +3,43 @@ use log::trace;
 use serde::{ser, Serialize};
 use std::io::Write;
 
-mod map;
 mod utils;
 
 pub struct Serializer {
     pub output: Vec<u8>,
+    ordered_pairs: Vec<(Vec<u8>, Vec<u8>)>,
+    current_key: Vec<u8>,
+    original_output: Vec<u8>,
 }
 
 pub fn to_bytes<T>(value: &T) -> Result<Vec<u8>>
 where
     T: Serialize,
 {
-    let mut serializer = Serializer { output: vec![] };
+    let mut serializer = Serializer {
+        output: vec![],
+        ordered_pairs: vec![],
+        current_key: vec![],
+        original_output: vec![],
+    };
     value.serialize(&mut serializer)?;
     Ok(serializer.output)
+}
+
+impl Serializer {
+    fn switch_to_temp_buffer(&mut self) {
+        // We swap the two buffers. This is necessary in order not to mix the current
+        // output (the final one) with a temporary buffer used for serializing a map,
+        // for example.
+        self.original_output.clear();
+        std::mem::swap(&mut self.original_output, &mut self.output);
+    }
+
+    fn switch_to_original_buffer(&mut self) {
+        // Move the original buffer back to the original variable self.output.
+        self.output.clear();
+        std::mem::swap(&mut self.original_output, &mut self.output);
+    }
 }
 
 impl<'a> ser::Serializer for &'a mut Serializer {
@@ -26,7 +49,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     type SerializeTuple = Self;
     type SerializeTupleStruct = Self;
     type SerializeTupleVariant = Self;
-    type SerializeMap = map::MapSerializer;
+    type SerializeMap = Self;
     type SerializeStruct = Self;
     type SerializeStructVariant = Self;
 
@@ -154,6 +177,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     where
         T: ?Sized + Serialize,
     {
+        println!("Serializing new type variant");
         trace!("Serializing new type variant");
         use ser::SerializeMap;
         let mut map: Self::SerializeMap = self.serialize_map(None)?;
@@ -202,7 +226,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
         trace!("Serializing map");
-        self.output.write(b"d").unwrap();
+        self.switch_to_temp_buffer();
         Ok(self)
     }
 
@@ -218,13 +242,13 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         _name: &'static str,
         _variant_index: u32,
         variant: &'static str,
-        _len: usize,
+        len: usize,
     ) -> Result<Self::SerializeStructVariant> {
-        trace!("Serializing struct variant");
+        trace!("Serializing struct variant, {}", variant);
+        println!("Serializing struct variant, {}", variant);
         self.output.write(b"d").unwrap();
         variant.serialize(&mut *self)?;
-        self.output.write(b"d").unwrap();
-        Ok(self)
+        self.serialize_map(Some(len))
     }
 }
 
@@ -300,31 +324,52 @@ impl<'a> ser::SerializeTupleVariant for &'a mut Serializer {
     }
 }
 
+////////////////////////////////////////////////////////////////////
+/// Map Serializer and similar ones
+////////////////////////////////////////////////////////////////////
 impl<'a> ser::SerializeMap for &'a mut Serializer {
     type Ok = ();
     type Error = Error;
 
-    fn serialize_key<T>(&mut self, key: &T) -> Result<()>
+    fn serialize_key<T>(&mut self, key: &T) -> Result<Self::Ok>
     where
         T: ?Sized + Serialize,
     {
         trace!("Serializing key");
-        key.serialize(&mut **self)
+        key.serialize(&mut **self)?;
+
+        self.current_key = vec![];
+        std::mem::swap(&mut self.current_key, &mut self.output);
+        Ok(())
     }
 
-    // It doesn't make a difference whether the colon is printed at the end of
-    // `serialize_key` or at the beginning of `serialize_value`. In this case
-    // the code is a bit simpler having it here.
-    fn serialize_value<T>(&mut self, value: &T) -> Result<()>
+    fn serialize_value<T>(&mut self, value: &T) -> Result<Self::Ok>
     where
         T: ?Sized + Serialize,
     {
         trace!("Serializing value");
-        value.serialize(&mut **self)
+        value.serialize(&mut **self)?;
+
+        if self.output.len() == 0 {
+            // If the value is None
+            self.current_key = vec![];
+            return Ok(());
+        }
+
+        assert!(self.current_key.len() > 0);
+
+        let mut key = vec![];
+        std::mem::swap(&mut self.current_key, &mut key);
+        let mut val = vec![];
+        std::mem::swap(&mut self.output, &mut val);
+
+        self.ordered_pairs.push((key, val));
+        Ok(())
     }
 
-    fn end(self) -> Result<()> {
-        self.output.write(b"e").unwrap();
+    fn end(self) -> Result<Self::Ok> {
+        self.switch_to_original_buffer();
+        write_dict_with_ordered_pairs(&mut self.ordered_pairs, &mut self.output)?;
         Ok(())
     }
 }
@@ -333,16 +378,25 @@ impl<'a> ser::SerializeStruct for &'a mut Serializer {
     type Ok = ();
     type Error = Error;
 
-    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<()>
+    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<Self::Ok>
     where
         T: ?Sized + Serialize,
     {
         key.serialize(&mut **self)?;
-        value.serialize(&mut **self)
+        let mut serialized_key = vec![];
+        std::mem::swap(&mut serialized_key, &mut self.output);
+
+        value.serialize(&mut **self)?;
+        let mut serialized_value = vec![];
+        std::mem::swap(&mut serialized_value, &mut self.output);
+
+        self.ordered_pairs.push((serialized_key, serialized_value));
+        Ok(())
     }
 
     fn end(self) -> Result<()> {
-        self.output.write(b"e").unwrap();
+        self.switch_to_original_buffer();
+        write_dict_with_ordered_pairs(&mut self.ordered_pairs, &mut self.output)?;
         Ok(())
     }
 }
@@ -351,37 +405,88 @@ impl<'a> ser::SerializeStructVariant for &'a mut Serializer {
     type Ok = ();
     type Error = Error;
 
-    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<()>
+    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<Self::Ok>
     where
         T: ?Sized + Serialize,
     {
         key.serialize(&mut **self)?;
-        value.serialize(&mut **self)
+        let mut serialized_key = vec![];
+        std::mem::swap(&mut serialized_key, &mut self.output);
+
+        value.serialize(&mut **self)?;
+        let mut serialized_value = vec![];
+        std::mem::swap(&mut serialized_value, &mut self.output);
+
+        self.ordered_pairs.push((serialized_key, serialized_value));
+        Ok(())
     }
 
-    fn end(self) -> Result<()> {
-        self.output.write(b"ee").unwrap();
+    fn end(self) -> Result<Self::Ok> {
+        self.switch_to_original_buffer();
+        write_dict_with_ordered_pairs(&mut self.ordered_pairs, &mut self.output)?;
+        self.output.write(b"e").unwrap();
         Ok(())
     }
 }
 
-/////////////////////////////////////////////////////////////////////////////////////
+fn write_dict_with_ordered_pairs(
+    ordered_pairs: &mut Vec<(Vec<u8>, Vec<u8>)>,
+    output: &mut Vec<u8>,
+) -> Result<()> {
+    ordered_pairs.sort_by_cached_key(|k: &(Vec<u8>, Vec<u8>)| {
+        let key: &[u8] = k.0.as_ref();
+        let index = key
+            .iter()
+            .position(|b| *b == b':')
+            .expect("should have a :");
+        let (_, new_key) = key.split_at(index + 1);
+        new_key.to_owned()
+    });
+
+    output.write(b"d").unwrap();
+    for (key, val) in ordered_pairs.iter() {
+        trace!("writing key {}", unsafe {
+            std::str::from_utf8_unchecked(key)
+        });
+        output.write(&key).unwrap();
+        output.write(&val).unwrap();
+    }
+    output.write(b"e").unwrap();
+    Ok(())
+}
+
+//////////////////////////////////////////////////////////////////////
+/// Tests
+//////////////////////////////////////////////////////////////////////
 
 #[test]
 fn test_struct_serialization() {
     #[derive(Serialize)]
     struct Test {
-        int: u32,
         seq: Vec<&'static str>,
+        int: u32,
     }
 
     let test = Test {
-        int: 1,
         seq: vec!["20", "40"],
+        int: 1,
     };
 
     let expected = "d3:inti1e3:seql2:202:40ee";
     assert_eq!(to_bytes(&test).unwrap(), expected.as_bytes());
+}
+
+#[test]
+fn test_map_serialization() {
+    use std::collections::HashMap;
+
+    let mut map = HashMap::new();
+    map.insert("my_key", 20);
+    map.insert("other_key", 1000);
+    map.insert("abc", 501);
+
+    let expected = "d3:abci501e6:my_keyi20e9:other_keyi1000ee";
+    assert_eq!(to_bytes(&map).unwrap(), expected.as_bytes());
 }
 
 #[test]
@@ -394,6 +499,7 @@ fn test_enum_serialization() {
         Newtype(u32),
         Tuple(u32, u32),
         Struct { a: u32 },
+        StructSorted { uiui: String, abc: u32, ppp: u8 },
     }
 
     {
@@ -420,6 +526,17 @@ fn test_enum_serialization() {
     {
         let s = E::Struct { a: 1 };
         let expected = "d6:Structd1:ai1eee";
+        let bytes = to_bytes(&s).unwrap();
+        assert_eq!(unsafe { str::from_utf8_unchecked(&bytes) }, expected);
+    }
+
+    {
+        let s = E::StructSorted {
+            uiui: "temp_string".to_string(),
+            abc: 1024,
+            ppp: 1,
+        };
+        let expected = "d12:StructSortedd3:abci1024e3:pppi1e4:uiui11:temp_stringee";
         let bytes = to_bytes(&s).unwrap();
         assert_eq!(unsafe { str::from_utf8_unchecked(&bytes) }, expected);
     }
