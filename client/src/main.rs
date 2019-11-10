@@ -4,16 +4,11 @@ extern crate serde;
 extern crate sha1;
 
 use serde::{Deserialize, Serialize};
-use sha1::{Digest, Sha1};
+use sha1::Digest;
 use std::io::Read;
-
-// TODO: we are currently sorting the keys of the structs by hand
-// since they should be sorted when serialized. This ideally should
-// be handled correctly by the bencoding library.
 
 #[derive(Serialize, Deserialize, Debug)]
 struct FileInfo {
-    // DO NOT REORDER THE KEYS
     length: u64,
     md5sum: String,
     path: Vec<String>,
@@ -21,7 +16,6 @@ struct FileInfo {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct InfoDict {
-    // DO NOT REORDER THE KEYS
     #[serde(skip_serializing_if = "Option::is_none")]
     files: Option<Vec<FileInfo>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -77,7 +71,7 @@ fn make_tracker_request(meta_info: &MetaInfo) -> Result<(), String> {
     Ok(())
 }
 
-fn main() {
+fn main() -> Result<(), String> {
     env_logger::init();
     let port_range = 6881..=6889;
 
@@ -109,5 +103,5 @@ fn main() {
         println!("File to download = {}", meta_info.info.name);
     }
 
-    make_tracker_request(&meta_info);
+    make_tracker_request(&meta_info)
 }
