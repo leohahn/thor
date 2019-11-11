@@ -1,14 +1,12 @@
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use log::{debug, error, info, trace};
 use rand::Rng;
-use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::ops::RangeInclusive;
 use std::time::Duration;
 use tokio::io;
 use tokio::net::UdpSocket;
 use tokio::prelude::*;
-use tokio::timer::{Elapsed, Timeout};
 
 const MAGIC_CONSTANT: i64 = 0x41727101980;
 const ACTION_CONNECT: i32 = 0;
@@ -18,7 +16,7 @@ pub struct Connection {
     socket: UdpSocket,
 }
 
-enum Error {
+pub enum Error {
     Tokio(tokio::io::Error),
     PortsExhausted,
     IncorrectTransactionId,
@@ -28,7 +26,7 @@ enum Error {
 
 impl Connection {
     pub async fn new(addr: SocketAddr) -> Result<Connection, Error> {
-        if let Some(socket) = try_bind_socket().await {
+        if let Some(mut socket) = try_bind_socket().await {
             socket.connect(&addr).await.map_err(Error::Tokio)?;
             let connection_id = connect(&mut socket).await?;
 
