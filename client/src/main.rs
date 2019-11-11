@@ -2,6 +2,7 @@ extern crate bencoding;
 extern crate env_logger;
 extern crate serde;
 extern crate sha1;
+extern crate thor;
 
 use serde::{Deserialize, Serialize};
 use sha1::Digest;
@@ -68,12 +69,15 @@ fn make_tracker_request(meta_info: &MetaInfo) -> Result<(), String> {
         println!();
     }
 
-    Ok(())
+    if meta_info.announce.starts_with("udp://") {
+        Ok(())
+    } else {
+        Err("Currently only UDP is supported for trackers".to_owned())
+    }
 }
 
 fn main() -> Result<(), String> {
     env_logger::init();
-    let port_range = 6881..=6889;
 
     let torrent_file = std::env::args().nth(1).unwrap();
     println!("Will parse torrent file {}", torrent_file);
