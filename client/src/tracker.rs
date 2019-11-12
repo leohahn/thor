@@ -14,8 +14,10 @@ const ACTION_CONNECT: i32 = 0;
 pub struct Connection {
     addr: SocketAddr,
     socket: UdpSocket,
+    id: i64,
 }
 
+#[derive(Debug)]
 pub enum Error {
     Tokio(tokio::io::Error),
     PortsExhausted,
@@ -38,6 +40,7 @@ impl Connection {
             Ok(Connection {
                 addr: addr,
                 socket: socket,
+                id: connection_id,
             })
         } else {
             Err(Error::PortsExhausted)

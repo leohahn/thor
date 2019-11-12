@@ -3,10 +3,12 @@ extern crate env_logger;
 extern crate serde;
 extern crate sha1;
 extern crate thor;
+extern crate tokio;
 
 use serde::{Deserialize, Serialize};
 use sha1::Digest;
 use std::io::Read;
+use std::net::SocketAddr;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct FileInfo {
@@ -47,7 +49,7 @@ struct MetaInfo {
     info: InfoDict,
 }
 
-fn make_tracker_request(meta_info: &MetaInfo) -> Result<(), String> {
+async fn make_tracker_request(meta_info: &MetaInfo) -> Result<(), String> {
     let info_bytes = bencoding::to_bytes(&meta_info.info)
         .map_err(|e| format!("Failed to encode info dictionary: {}", e))?;
     {
@@ -70,13 +72,22 @@ fn make_tracker_request(meta_info: &MetaInfo) -> Result<(), String> {
     }
 
     if meta_info.announce.starts_with("udp://") {
+        let (_, url) = meta_info.announce.split_at("udp://".len());
+        println!("url is: {}", url);
+
+        let addr: SocketAddr = //url
+            "tracker.leechers-paradise.org:6969"
+            .parse()
+            .map_err(|e| format!("Could not parse url: {}", e))?;
+        let connection = thor::tracker::Connection::new(addr).await.unwrap();
         Ok(())
     } else {
         Err("Currently only UDP is supported for trackers".to_owned())
     }
 }
 
-fn main() -> Result<(), String> {
+#[tokio::main]
+async fn main() -> Result<(), String> {
     env_logger::init();
 
     let torrent_file = std::env::args().nth(1).unwrap();
@@ -107,5 +118,5 @@ fn main() -> Result<(), String> {
         println!("File to download = {}", meta_info.info.name);
     }
 
-    make_tracker_request(&meta_info)
+    make_tracker_request(&meta_info).await
 }
