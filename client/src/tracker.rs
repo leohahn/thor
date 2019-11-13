@@ -10,6 +10,10 @@ use tokio::prelude::*;
 
 const MAGIC_CONSTANT: i64 = 0x41727101980;
 const ACTION_CONNECT: i32 = 0;
+const ACTION_ANNOUNCE: i32 = 1;
+const ACTION_SCRAPE: i32 = 2;
+const ACTION_ERROR: i32 = 3;
+const RECV_BUF_SIZE: usize = 1024;
 
 pub struct Connection {
     addr: SocketAddr,
@@ -73,7 +77,7 @@ async fn connect(socket: &mut UdpSocket) -> Result<i64, Error> {
 
     socket.send(&connect_req).await.map_err(Error::Tokio)?;
 
-    let mut buf = vec![];
+    let mut buf = [0u8; RECV_BUF_SIZE];
 
     let len = socket
         .recv(&mut buf)
@@ -87,9 +91,9 @@ async fn connect(socket: &mut UdpSocket) -> Result<i64, Error> {
             error!("receive packet failed: {}", e);
             Error::Tokio(e)
         })?;
-    trace!("read {} bytes from dgram", len);
+    debug!("read {} bytes from dgram", len);
 
-    let conn_res = read_connect_response(&buf, transaction_id)
+    let conn_res = read_connect_response(&buf)
         .map_err(|e| Error::Tokio(io::Error::new(io::ErrorKind::InvalidData, e)))?;
 
     if conn_res.transaction_id != transaction_id {
@@ -119,10 +123,7 @@ fn get_connect_request(transaction_id: i32) -> Vec<u8> {
     writer
 }
 
-fn read_connect_response(
-    buf: &[u8],
-    transaction_id: i32,
-) -> Result<ConnectResponse, std::io::Error> {
+fn read_connect_response(buf: &[u8]) -> Result<ConnectResponse, std::io::Error> {
     let mut reader = std::io::Cursor::new(buf);
     let action = reader.read_i32::<BigEndian>()?;
     let recv_transaction_id = reader.read_i32::<BigEndian>()?;
@@ -130,7 +131,35 @@ fn read_connect_response(
     let res = ConnectResponse {
         action: action,
         connection_id: connection_id,
-        transaction_id: transaction_id,
+        transaction_id: recv_transaction_id,
     };
     Ok(res)
+}
+
+fn get_announcement_request(
+    connection_id: i64,
+    transaction_id: i32,
+    listening_port: u16,
+    info_hash: &[u8; 20],
+    peer_id: &[u8; 20],
+) -> Vec<u8> {
+    use std::io::Write;
+    let mut writer = vec![];
+    writer.write_i64::<BigEndian>(connection_id).unwrap(); // connection_id
+    writer.write_i32::<BigEndian>(ACTION_ANNOUNCE).unwrap(); // action
+    writer.write_i32::<BigEndian>(transaction_id).unwrap(); // transaction_id
+
+    Write::write(&mut writer, info_hash).unwrap(); // info_hash: 20 bytes
+    Write::write(&mut writer, peer_id).unwrap(); // peer_id: 20 bytes
+
+    writer.write_i64::<BigEndian>(downloaded).unwrap(); // downloaded
+    writer.write_i64::<BigEndian>(left).unwrap(); // left
+    writer.write_i64::<BigEndian>(uploaded).unwrap(); // uploaded
+    writer.write_i32::<BigEndian>(event).unwrap(); // event
+    writer.write_u32::<BigEndian>(0).unwrap(); // ip
+    writer.write_u32::<BigEndian>(key).unwrap(); // key
+    writer.write_i32::<BigEndian>(-1).unwrap(); // num_want
+    writer.write_u16::<BigEndian>(listening_port).unwrap(); // port
+    writer.write_u16::<BigEndian>(extensions).unwrap(); // extensions
+    writer
 }

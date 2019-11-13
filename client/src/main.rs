@@ -8,7 +8,7 @@ extern crate tokio;
 use serde::{Deserialize, Serialize};
 use sha1::Digest;
 use std::io::Read;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct FileInfo {
@@ -75,12 +75,16 @@ async fn make_tracker_request(meta_info: &MetaInfo) -> Result<(), String> {
         let (_, url) = meta_info.announce.split_at("udp://".len());
         println!("url is: {}", url);
 
-        let addr: SocketAddr = //url
-            "tracker.leechers-paradise.org:6969"
-            .parse()
-            .map_err(|e| format!("Could not parse url: {}", e))?;
-        let connection = thor::tracker::Connection::new(addr).await.unwrap();
-        Ok(())
+        let address_str = "tracker.leechers-paradise.org:6969";
+        let mut addrs_iter = address_str.to_socket_addrs().unwrap();
+
+        if let Some(addr) = addrs_iter.next() {
+            println!("resolved to ip {}", addr);
+            let connection = thor::tracker::Connection::new(addr).await.unwrap();
+            Ok(())
+        } else {
+            Err(format!("failed to resolve address {}", address_str))
+        }
     } else {
         Err("Currently only UDP is supported for trackers".to_owned())
     }
