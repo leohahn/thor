@@ -80,7 +80,8 @@ async fn make_tracker_request(meta_info: &MetaInfo) -> Result<(), String> {
 
         if let Some(addr) = addrs_iter.next() {
             println!("resolved to ip {}", addr);
-            let connection = thor::tracker::Connection::new(addr).await.unwrap();
+            let mut connection = thor::tracker::Connection::new(addr).await.unwrap();
+            connection.announce().await.unwrap();
             Ok(())
         } else {
             Err(format!("failed to resolve address {}", address_str))
