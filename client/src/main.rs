@@ -5,72 +5,17 @@ extern crate sha1;
 extern crate thor;
 extern crate tokio;
 
-use serde::{Deserialize, Serialize};
-use sha1::Digest;
 use std::io::Read;
 use std::net::{SocketAddr, ToSocketAddrs};
+use tokio::net::TcpStream;
 
-#[derive(Serialize, Deserialize, Debug)]
-struct FileInfo {
-    length: u64,
-    md5sum: String,
-    path: Vec<String>,
+async fn peer_connection(addr: String) {
+    println!("ASOIDJOIASJD");
+    let socket_addr: SocketAddr = addr.parse().unwrap();
+    let socket = TcpStream::connect(&socket_addr).await.unwrap();
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct InfoDict {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    files: Option<Vec<FileInfo>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    length: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    md5sum: Option<String>,
-    name: String,
-    #[serde(rename = "piece length")]
-    piece_length: u64,
-    #[serde(with = "serde_bytes")]
-    pieces: Vec<u8>,
-    private: Option<bool>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct MetaInfo {
-    announce: String,
-    #[serde(rename = "announce-list", skip_serializing_if = "Option::is_none")]
-    announce_list: Option<Vec<Vec<String>>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    comment: Option<String>,
-    #[serde(rename = "created by", skip_serializing_if = "Option::is_none")]
-    created_by: Option<String>,
-    #[serde(rename = "creation date", skip_serializing_if = "Option::is_none")]
-    creation_date: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    encoding: Option<String>,
-    info: InfoDict,
-}
-
-async fn make_tracker_request(meta_info: &MetaInfo) -> Result<(), String> {
-    let info_bytes = bencoding::to_bytes(&meta_info.info)
-        .map_err(|e| format!("Failed to encode info dictionary: {}", e))?;
-    {
-        use std::io::Write;
-        let mut file = std::fs::File::create("MY_FILE.txt").unwrap();
-        let _ = file.write(&info_bytes).unwrap();
-    }
-
-    let mut hasher = sha1::Sha1::default();
-    hasher.input(info_bytes);
-
-    {
-        print!("Info hash: ");
-        let bytes = &hasher.result();
-        assert!(bytes.len() == 20);
-        for byte in bytes {
-            print!("{:02x}", byte);
-        }
-        println!();
-    }
-
+async fn make_tracker_request(meta_info: &thor::MetaInfo) -> Result<(), String> {
     if meta_info.announce.starts_with("udp://") {
         let (_, url) = meta_info.announce.split_at("udp://".len());
         println!("url is: {}", url);
@@ -81,7 +26,15 @@ async fn make_tracker_request(meta_info: &MetaInfo) -> Result<(), String> {
         if let Some(addr) = addrs_iter.next() {
             println!("resolved to ip {}", addr);
             let mut connection = thor::tracker::Connection::new(addr).await.unwrap();
-            connection.announce().await.unwrap();
+            let res = connection.announce(&meta_info.info).await.unwrap();
+            for peer in res.peers.iter() {
+                let addr = peer.to_string();
+                println!("will connect to peer at {}", addr);
+                tokio::spawn(async move { peer_connection(addr).await });
+            }
+
+            loop {}
+            // Now, create the peer tcp connections
             Ok(())
         } else {
             Err(format!("failed to resolve address {}", address_str))
@@ -102,7 +55,7 @@ async fn main() -> Result<(), String> {
     let mut file = std::fs::File::open(torrent_file).unwrap();
     let _ = file.read_to_end(&mut torrent_file_bytes).unwrap();
 
-    let meta_info: MetaInfo = bencoding::from_bytes(&torrent_file_bytes).unwrap();
+    let meta_info: thor::MetaInfo = bencoding::from_bytes(&torrent_file_bytes).unwrap();
     println!("Tracker URL = {}", meta_info.announce);
     println!(
         "Piece length = {:.2} KiB",

@@ -1,6 +1,8 @@
+use crate::model::InfoDict;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use log::{debug, error, info, trace};
 use rand::Rng;
+use sha1::Digest;
 use std::net::SocketAddr;
 use std::ops::RangeInclusive;
 use std::time::Duration;
@@ -36,19 +38,35 @@ struct ConnectResponse {
 }
 
 #[derive(Debug)]
-#[repr(C, packed)]
-struct Peer {
-    ip: i32,
+pub struct Peer {
+    ip: u32,
     port: u16,
 }
 
+impl std::fmt::Display for Peer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let first = (self.ip as u32) >> 24;
+        let second = ((self.ip as u32) & 0b00000000_11111111_00000000_00000000) >> 16;
+        let third = ((self.ip as u32) & 0b00000000_00000000_11111111_00000000) >> 8;
+        let fourth = (self.ip as u32) & 0b00000000_00000000_00000000_11111111;
+        write!(f, "{}.{}.{}.{}:{}", first, second, third, fourth, self.port)
+    }
+}
+
+impl Peer {
+    fn size() -> usize {
+        use std::mem::size_of;
+        size_of::<u32>() + size_of::<u16>()
+    }
+}
+
 #[derive(Debug)]
-struct AnnounceResponsePayload {
+pub struct AnnounceResponsePayload {
     transaction_id: i32,
     interval: std::time::Duration,
     num_leechers: i32,
     num_seeders: i32,
-    peers: Vec<Peer>,
+    pub peers: Vec<Peer>,
 }
 
 #[derive(Debug)]
@@ -88,12 +106,15 @@ impl Connection {
         }
     }
 
-    pub async fn announce(&mut self) -> Result<(), Error> {
+    pub async fn announce(
+        &mut self,
+        info_dict: &InfoDict,
+    ) -> Result<AnnounceResponsePayload, Error> {
+        let hashed_info_dict = get_hashed_info_dict(info_dict);
         let transaction_id = get_transaction_id();
-        let info_hash = [0u8; 20];
-        let peer_id = [0u8; 20];
+        let peer_id = get_peer_id();
         let announce_req =
-            get_announce_request(self.id, transaction_id, 8080, &info_hash, &peer_id);
+            get_announce_request(self.id, transaction_id, 8080, &hashed_info_dict, &peer_id);
 
         self.socket
             .send(&announce_req)
@@ -117,6 +138,7 @@ impl Connection {
             })?;
         debug!("read {} bytes from dgram", len);
 
+        // TODO: add exponential backoff
         let announce_res = read_announce_response(&buf, len)
             .map_err(|e| Error::Tokio(io::Error::new(io::ErrorKind::InvalidData, e)))?;
 
@@ -127,16 +149,32 @@ impl Connection {
                         "received incorrect transaction id".to_owned(),
                     ));
                 }
-                println!("leechers: {}", res.num_leechers);
-                println!("seeders: {}", res.num_seeders);
-                println!("interval: {:?}", res.interval);
-                println!("peers (len = {}): {:?}", res.peers.len(), res.peers);
-            }
-            AnnounceResponse::Error(s) => return Err(Error::Server(s)),
-        };
+                debug!("leechers: {}", res.num_leechers);
+                debug!("seeders: {}", res.num_seeders);
+                debug!("interval: {:?}", res.interval);
+                debug!("peers (len = {})", res.peers.len());
+                for peer in res.peers.iter() {
+                    debug!("    {} => {}", peer.ip, peer);
+                }
 
-        Ok(())
+                Ok(res)
+            }
+            AnnounceResponse::Error(s) => Err(Error::Server(s)),
+        }
     }
+}
+
+fn get_hashed_info_dict(info_dict: &InfoDict) -> Vec<u8> {
+    let info_dict_bytes =
+        bencoding::to_bytes(info_dict).expect("info dict should not fail to encode");
+
+    let mut hasher = sha1::Sha1::default();
+    hasher.input(info_dict_bytes);
+
+    let bytes = &hasher.result();
+    assert!(bytes.len() == 20);
+
+    bytes.to_vec()
 }
 
 async fn try_bind_socket() -> Option<UdpSocket> {
@@ -190,6 +228,24 @@ async fn connect(socket: &mut UdpSocket) -> Result<i64, Error> {
     Ok(conn_res.connection_id)
 }
 
+fn get_peer_id() -> Vec<u8> {
+    const PEER_ID_SIZE: usize = 20;
+
+    let mut res = vec![];
+    std::io::Write::write(&mut res, b"TH-0.1.0---").unwrap();
+
+    let bytes_remaining = PEER_ID_SIZE - res.len();
+    for _ in 0..bytes_remaining {
+        // generate a random ascii byte
+        let byte = rand::thread_rng().gen::<u8>();
+        res.write_u8(byte).unwrap();
+    }
+
+    // the peer id should have 20 bytes in size
+    assert!(res.len() == PEER_ID_SIZE);
+    res
+}
+
 fn get_transaction_id() -> i32 {
     // A transaction id is just a random i32
     rand::thread_rng().gen::<i32>()
@@ -225,10 +281,13 @@ fn get_announce_request(
     connection_id: i64,
     transaction_id: i32,
     listening_port: u16,
-    info_hash: &[u8; 20],
-    peer_id: &[u8; 20],
+    info_hash: &[u8],
+    peer_id: &[u8],
 ) -> Vec<u8> {
     use std::io::Write;
+    assert!(info_hash.len() == 20);
+    assert!(peer_id.len() == 20);
+
     let mut writer = vec![];
     writer.write_i64::<BigEndian>(connection_id).unwrap(); // connection_id
     writer.write_i32::<BigEndian>(ACTION_ANNOUNCE).unwrap(); // action
@@ -253,9 +312,6 @@ fn read_announce_response(
     buf: &[u8],
     bytes_read: usize,
 ) -> Result<AnnounceResponse, std::io::Error> {
-    use std::mem::size_of;
-    assert!(size_of::<Peer>() == size_of::<u16>() + size_of::<i32>());
-
     let mut reader = std::io::Cursor::new(buf);
     let action = reader.read_i32::<BigEndian>().unwrap();
     let recv_transaction_id = reader.read_i32::<BigEndian>().unwrap();
@@ -267,8 +323,8 @@ fn read_announce_response(
         let mut peers = vec![];
 
         let mut bytes_left = bytes_read - reader.position() as usize;
-        while bytes_left >= size_of::<Peer>() {
-            let ip = reader.read_i32::<BigEndian>().unwrap();
+        while bytes_left >= Peer::size() {
+            let ip = reader.read_u32::<BigEndian>().unwrap();
             let port = reader.read_u16::<BigEndian>().unwrap();
             peers.push(Peer { ip: ip, port: port });
             bytes_left = bytes_read - reader.position() as usize;
