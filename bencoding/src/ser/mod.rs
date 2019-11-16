@@ -5,11 +5,31 @@ use std::io::Write;
 
 mod utils;
 
+#[derive(Debug, PartialEq)]
+pub struct MapState {
+    pub ordered_pairs: Vec<(Vec<u8>, Vec<u8>)>,
+    pub output: Vec<u8>,
+    pub current_key: Vec<u8>,
+}
+
+impl MapState {
+    fn new() -> MapState {
+        MapState {
+            ordered_pairs: vec![],
+            output: vec![],
+            current_key: vec![],
+        }
+    }
+}
+
+// pub struct Buffers {
+//     pub main: Vec<u8>,
+//     pub temp: Vec<u8>,
+// }
+
 pub struct Serializer {
     pub output: Vec<u8>,
-    ordered_pairs: Vec<(Vec<u8>, Vec<u8>)>,
-    current_key: Vec<u8>,
-    original_output: Vec<u8>,
+    map_state: Option<MapState>,
 }
 
 pub fn to_bytes<T>(value: &T) -> Result<Vec<u8>>
@@ -17,29 +37,15 @@ where
     T: Serialize,
 {
     let mut serializer = Serializer {
-        output: vec![],
-        ordered_pairs: vec![],
-        current_key: vec![],
-        original_output: vec![],
+        output: Vec::new(),
+        map_state: None,
     };
     value.serialize(&mut serializer)?;
+
+    if let Some(map_state) = serializer.map_state {
+        serializer.output.write(&map_state.output).unwrap();
+    }
     Ok(serializer.output)
-}
-
-impl Serializer {
-    fn switch_to_temp_buffer(&mut self) {
-        // We swap the two buffers. This is necessary in order not to mix the current
-        // output (the final one) with a temporary buffer used for serializing a map,
-        // for example.
-        self.original_output.clear();
-        std::mem::swap(&mut self.original_output, &mut self.output);
-    }
-
-    fn switch_to_original_buffer(&mut self) {
-        // Move the original buffer back to the original variable self.output.
-        self.output.clear();
-        std::mem::swap(&mut self.original_output, &mut self.output);
-    }
 }
 
 impl<'a> ser::Serializer for &'a mut Serializer {
@@ -189,6 +195,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq> {
         trace!("Serializing seq");
         self.output.write(b"l").unwrap();
+        trace!("seq: main: {}", String::from_utf8_lossy(&self.output));
         Ok(self)
     }
 
@@ -226,12 +233,12 @@ impl<'a> ser::Serializer for &'a mut Serializer {
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap> {
         trace!("Serializing map");
-        self.switch_to_temp_buffer();
+        assert!(self.map_state.is_none());
+        self.map_state = Some(MapState::new());
         Ok(self)
     }
 
     fn serialize_struct(self, name: &'static str, len: usize) -> Result<Self::SerializeStruct> {
-        trace!("Serializing struct: {}", name);
         self.serialize_map(Some(len))
     }
 
@@ -262,7 +269,15 @@ impl<'a> ser::SerializeSeq for &'a mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        value.serialize(&mut **self)
+        value.serialize(&mut **self)?;
+
+        if let Some(map_state) = self.map_state.take() {
+            // A map/struct was serialized to map_state.output,
+            // move it into the serialized value variable.
+            self.output.write(&map_state.output).unwrap();
+        }
+
+        Ok(())
     }
 
     // Close the sequence.
@@ -334,12 +349,24 @@ impl<'a> ser::SerializeMap for &'a mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        trace!("Serializing key");
-        key.serialize(&mut **self)?;
+        use std::mem::swap;
+        assert!(self.map_state.is_some());
 
-        self.current_key = vec![];
-        std::mem::swap(&mut self.current_key, &mut self.output);
-        assert!(self.output.is_empty());
+        {
+            let map_state = self.map_state.as_mut().expect("map_state should exist");
+            map_state.current_key.clear();
+            swap(&mut map_state.current_key, &mut self.output);
+        }
+
+        {
+            trace!("Serializing key");
+            key.serialize(&mut **self)?;
+        }
+
+        {
+            let map_state = self.map_state.as_mut().expect("map_state should exist");
+            swap(&mut map_state.current_key, &mut self.output);
+        }
         Ok(())
     }
 
@@ -347,37 +374,58 @@ impl<'a> ser::SerializeMap for &'a mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        trace!("Serializing value");
-        value.serialize(&mut **self)?;
+        use std::mem::swap;
+        assert!(self.map_state.is_some());
 
-        if self.output.len() == 0 {
+        // the key was already serialized, now we need to serialize the value.
+        // since the value could be a map/struct as well, we will backup the map_state.
+        let backup_map_state = self.map_state.take();
+
+        let mut serialized_value = vec![];
+        {
+            swap(&mut serialized_value, &mut self.output);
+
+            trace!("Serializing value");
+            value.serialize(&mut **self)?;
+
+            if let Some(mut map_state) = self.map_state.take() {
+                // A map/struct was serialized to map_state.output,
+                // move it into the serialized value variable.
+                swap(&mut serialized_value, &mut map_state.output);
+            } else {
+                swap(&mut serialized_value, &mut self.output);
+            }
+        }
+
+        // Move backup map_state into the original position
+        self.map_state = backup_map_state;
+
+        let map_state: &mut MapState = self.map_state.as_mut().unwrap();
+
+        if serialized_value.is_empty() {
             // If the value is None
-            self.current_key = vec![];
             return Ok(());
         }
 
-        assert!(self.current_key.len() > 0);
-
-        let mut key = vec![];
-        std::mem::swap(&mut self.current_key, &mut key);
-        let mut val = vec![];
-        std::mem::swap(&mut self.output, &mut val);
-
         trace!(
             "[map] adding key val: {} -> {}",
-            String::from_utf8_lossy(&key),
-            String::from_utf8_lossy(&val)
+            String::from_utf8_lossy(&map_state.current_key),
+            String::from_utf8_lossy(&serialized_value)
         );
-        self.ordered_pairs.push((key, val));
+        map_state
+            .ordered_pairs
+            .push((map_state.current_key.clone(), serialized_value));
         Ok(())
     }
 
     fn end(self) -> Result<Self::Ok> {
-        self.switch_to_original_buffer();
-        write_dict_with_ordered_pairs(&mut self.ordered_pairs, &mut self.output)?;
+        assert!(self.map_state.is_some());
+        let map_state: &mut MapState = self.map_state.as_mut().unwrap();
+
+        write_dict_with_ordered_pairs(&mut map_state.ordered_pairs, &mut map_state.output)?;
         trace!(
-            "[map] original buffer: {}",
-            String::from_utf8_lossy(&self.output),
+            "[map] result: {}",
+            String::from_utf8_lossy(&map_state.output),
         );
         Ok(())
     }
@@ -391,36 +439,71 @@ impl<'a> ser::SerializeStruct for &'a mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        trace!("[struct] serializing field named {}", key);
-        key.serialize(&mut **self)?;
+        use std::mem::swap;
+        assert!(self.map_state.is_some());
+
+        trace!("serialize_field({})", key);
+
         let mut serialized_key = vec![];
-        std::mem::swap(&mut serialized_key, &mut self.output);
+        {
+            swap(&mut serialized_key, &mut self.output);
 
-        value.serialize(&mut **self)?;
-        let mut serialized_value = vec![];
-        std::mem::swap(&mut serialized_value, &mut self.output);
+            trace!("Serializing key");
+            key.serialize(&mut **self)?;
 
-        if serialized_value.len() != 0 {
-            // If the value is not empty we write as an ordered pair
-            trace!(
-                "[struct] adding key val: {} -> {}",
-                String::from_utf8_lossy(&serialized_key),
-                String::from_utf8_lossy(&serialized_value)
-            );
-
-            self.ordered_pairs.push((serialized_key, serialized_value));
+            swap(&mut serialized_key, &mut self.output);
         }
 
-        assert!(self.output.is_empty());
+        // the key was already serialized, now we need to serialize the value.
+        // since the value could be a map/struct as well, we will backup the map_state.
+        let backup_map_state = self.map_state.take();
+
+        let mut serialized_value = vec![];
+        {
+            swap(&mut serialized_value, &mut self.output);
+
+            trace!("Serializing value");
+            value.serialize(&mut **self)?;
+
+            if let Some(mut map_state) = self.map_state.take() {
+                // A map/struct was serialized to map_state.output,
+                // move it into the serialized value variable.
+                swap(&mut serialized_value, &mut map_state.output);
+            } else {
+                swap(&mut serialized_value, &mut self.output);
+            }
+        }
+
+        // Move backup map_state into the original position
+        self.map_state = backup_map_state;
+
+        let map_state: &mut MapState = self.map_state.as_mut().unwrap();
+
+        if serialized_value.is_empty() {
+            // If the value is None
+            return Ok(());
+        }
+
+        trace!(
+            "[struct] adding key val: {} -> {}",
+            String::from_utf8_lossy(&map_state.current_key),
+            String::from_utf8_lossy(&serialized_value)
+        );
+        map_state
+            .ordered_pairs
+            .push((serialized_key, serialized_value));
+
         Ok(())
     }
 
     fn end(self) -> Result<()> {
-        self.switch_to_original_buffer();
-        write_dict_with_ordered_pairs(&mut self.ordered_pairs, &mut self.output)?;
+        assert!(self.map_state.is_some());
+        let map_state: &mut MapState = self.map_state.as_mut().unwrap();
+
+        write_dict_with_ordered_pairs(&mut map_state.ordered_pairs, &mut map_state.output)?;
         trace!(
-            "[struct] original buffer: {}",
-            String::from_utf8_lossy(&self.output),
+            "[struct] result: {}",
+            String::from_utf8_lossy(&map_state.output),
         );
         Ok(())
     }
@@ -434,32 +517,18 @@ impl<'a> ser::SerializeStructVariant for &'a mut Serializer {
     where
         T: ?Sized + Serialize,
     {
-        key.serialize(&mut **self)?;
-        let mut serialized_key = vec![];
-        std::mem::swap(&mut serialized_key, &mut self.output);
-
-        value.serialize(&mut **self)?;
-        let mut serialized_value = vec![];
-        std::mem::swap(&mut serialized_value, &mut self.output);
-
-        if serialized_value.len() != 0 {
-            trace!(
-                "[struct_variant] adding key val: {} -> {}",
-                String::from_utf8_lossy(&serialized_key),
-                String::from_utf8_lossy(&serialized_value)
-            );
-            self.ordered_pairs.push((serialized_key, serialized_value));
-        }
-        Ok(())
+        ser::SerializeStruct::serialize_field(self, key, value)
     }
 
     fn end(self) -> Result<Self::Ok> {
-        self.switch_to_original_buffer();
-        write_dict_with_ordered_pairs(&mut self.ordered_pairs, &mut self.output)?;
-        self.output.write(b"e").unwrap();
+        assert!(self.map_state.is_some());
+        let map_state: &mut MapState = self.map_state.as_mut().unwrap();
+
+        write_dict_with_ordered_pairs(&mut map_state.ordered_pairs, &mut map_state.output)?;
+        map_state.output.write(b"e").unwrap();
         trace!(
-            "[struct_variant] original buffer: {}",
-            String::from_utf8_lossy(&self.output),
+            "[struct_variant] result: {}",
+            String::from_utf8_lossy(&map_state.output),
         );
         Ok(())
     }
@@ -488,6 +557,7 @@ fn write_dict_with_ordered_pairs(
         output.write(&val).unwrap();
     }
     output.write(b"e").unwrap();
+    ordered_pairs.clear();
     Ok(())
 }
 
