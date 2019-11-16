@@ -5,6 +5,7 @@ extern crate rand;
 extern crate sha1;
 extern crate tokio;
 
+pub mod error;
 pub mod model;
 pub mod tracker;
 

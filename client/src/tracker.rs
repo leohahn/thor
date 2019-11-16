@@ -1,6 +1,7 @@
+use crate::error::Error;
 use crate::model::InfoDict;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use log::{debug, error, info, trace};
+use log::{debug, error, info, warn};
 use rand::Rng;
 use sha1::Digest;
 use std::net::SocketAddr;
@@ -28,13 +29,20 @@ pub struct Connection {
     addr: SocketAddr,
     socket: UdpSocket,
     id: i64,
+    port: u16,
 }
 
 #[derive(Debug)]
-struct ConnectResponse {
+struct ConnectResponsePayload {
     transaction_id: i32,
     action: i32,
     connection_id: i64,
+}
+
+#[derive(Debug)]
+enum ConnectResponse {
+    Payload(ConnectResponsePayload),
+    Error(String),
 }
 
 #[derive(Debug)]
@@ -75,19 +83,9 @@ enum AnnounceResponse {
     Error(String),
 }
 
-#[derive(Debug)]
-pub enum Error {
-    Tokio(tokio::io::Error),
-    PortsExhausted,
-    IncorrectTransactionId,
-    IncorrectAction,
-    Timeout,
-    Server(String),
-}
-
 impl Connection {
     pub async fn new(addr: SocketAddr) -> Result<Connection, Error> {
-        if let Some(mut socket) = try_bind_socket().await {
+        if let Some((mut socket, port)) = try_bind_socket().await {
             socket.connect(&addr).await.map_err(Error::Tokio)?;
             let connection_id = connect(&mut socket).await?;
 
@@ -100,27 +98,18 @@ impl Connection {
                 addr: addr,
                 socket: socket,
                 id: connection_id,
+                port: port,
             })
         } else {
             Err(Error::PortsExhausted)
         }
     }
 
-    pub async fn announce(
-        &mut self,
-        info_dict: &InfoDict,
-    ) -> Result<AnnounceResponsePayload, Error> {
-        let hashed_info_dict = get_hashed_info_dict(info_dict);
+    pub async fn scrape(&mut self) -> Result<(), Error> {
         let transaction_id = get_transaction_id();
-        let peer_id = get_peer_id();
-        let announce_req =
-            get_announce_request(self.id, transaction_id, 8080, &hashed_info_dict, &peer_id);
+        let scrape_req = get_scrape_request(self.id, transaction_id);
 
-        self.socket
-            .send(&announce_req)
-            .await
-            .map_err(Error::Tokio)?;
-
+        self.socket.send(&scrape_req).await?;
         let mut buf = [0u8; RECV_BUF_SIZE];
 
         let len = self
@@ -131,12 +120,44 @@ impl Connection {
             .map_err(|e| {
                 error!("attempt to receive announce response timed out: {}", e);
                 Error::Timeout
-            })?
+            })??;
+
+        debug!("[scrape] read {} bytes from dgram", len);
+        assert!(len >= 20);
+
+        Ok(())
+    }
+
+    pub async fn announce(
+        &mut self,
+        info_dict: &InfoDict,
+    ) -> Result<AnnounceResponsePayload, Error> {
+        let hashed_info_dict = get_hashed_info_dict(info_dict);
+        let transaction_id = get_transaction_id();
+        let peer_id = get_peer_id();
+        let announce_req = get_announce_request(
+            self.id,
+            transaction_id,
+            self.port,
+            &hashed_info_dict,
+            &peer_id,
+        );
+
+        self.socket.send(&announce_req).await?;
+        let mut buf = [0u8; RECV_BUF_SIZE];
+
+        let len = self
+            .socket
+            .recv(&mut buf)
+            .timeout(Duration::from_secs(2))
+            .await
             .map_err(|e| {
-                error!("receive packet failed: {}", e);
-                Error::Tokio(e)
-            })?;
+                error!("attempt to receive announce response timed out: {}", e);
+                Error::Timeout
+            })??;
+
         debug!("read {} bytes from dgram", len);
+        assert!(len >= 20);
 
         // TODO: add exponential backoff
         let announce_res = read_announce_response(&buf, len)
@@ -174,18 +195,23 @@ fn get_hashed_info_dict(info_dict: &InfoDict) -> Vec<u8> {
     let bytes = &hasher.result();
     assert!(bytes.len() == 20);
 
+    debug!("info_hash: {:02x}", &bytes);
+
     bytes.to_vec()
 }
 
-async fn try_bind_socket() -> Option<UdpSocket> {
-    let port_range: RangeInclusive<i32> = 6881..=6889;
+async fn try_bind_socket() -> Option<(UdpSocket, u16)> {
+    let port_range: RangeInclusive<u16> = 6881..=6889;
     for port in port_range {
         let local_addr: SocketAddr = format!("0.0.0.0:{}", port).parse().ok()?;
-        let socket = UdpSocket::bind(&local_addr)
-            .await
-            .map_err(|e| error!("failed to bind to socket: {}", e))
-            .ok()?;
-        return Some(socket);
+        let socket = match UdpSocket::bind(&local_addr).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("failed to bind to socket on port {}: {}", port, e);
+                continue;
+            }
+        };
+        return Some((socket, port));
     }
     None
 }
@@ -194,6 +220,10 @@ async fn connect(socket: &mut UdpSocket) -> Result<i64, Error> {
     let transaction_id = get_transaction_id();
     let connect_req = get_connect_request(transaction_id);
 
+    debug!(
+        "connecting to tracker with transaction_id {}",
+        transaction_id
+    );
     socket.send(&connect_req).await.map_err(Error::Tokio)?;
 
     let mut buf = [0u8; RECV_BUF_SIZE];
@@ -205,27 +235,21 @@ async fn connect(socket: &mut UdpSocket) -> Result<i64, Error> {
         .map_err(|e| {
             error!("attempt to connect timed out: {}", e);
             Error::Timeout
-        })?
-        .map_err(|e| {
-            error!("receive packet failed: {}", e);
-            Error::Tokio(e)
-        })?;
-    debug!("read {} bytes from dgram", len);
+        })??;
 
-    let conn_res = read_connect_response(&buf)
-        .map_err(|e| Error::Tokio(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+    assert!(len >= 16);
 
-    if conn_res.transaction_id != transaction_id {
-        error!("received incorrect transaction id");
-        return Err(Error::IncorrectTransactionId);
+    match read_connect_response(&buf, len)? {
+        ConnectResponse::Payload(res) => {
+            if res.transaction_id != transaction_id {
+                error!("received incorrect transaction id");
+                return Err(Error::IncorrectTransactionId);
+            }
+
+            Ok(res.connection_id)
+        }
+        ConnectResponse::Error(s) => Err(Error::Server(s)),
     }
-
-    if conn_res.action != ACTION_CONNECT {
-        error!("received incorrect action");
-        return Err(Error::IncorrectAction);
-    }
-
-    Ok(conn_res.connection_id)
 }
 
 fn get_peer_id() -> Vec<u8> {
@@ -264,17 +288,29 @@ fn get_connect_request(transaction_id: i32) -> Vec<u8> {
     writer
 }
 
-fn read_connect_response(buf: &[u8]) -> Result<ConnectResponse, std::io::Error> {
+fn read_connect_response(buf: &[u8], nread: usize) -> Result<ConnectResponse, Error> {
+    assert!(nread > 4);
     let mut reader = std::io::Cursor::new(buf);
     let action = reader.read_i32::<BigEndian>()?;
     let recv_transaction_id = reader.read_i32::<BigEndian>()?;
-    let connection_id = reader.read_i64::<BigEndian>()?;
-    let res = ConnectResponse {
-        action: action,
-        connection_id: connection_id,
-        transaction_id: recv_transaction_id,
-    };
-    Ok(res)
+
+    if action == ACTION_CONNECT {
+        assert!(nread == 16);
+        let connection_id = reader.read_i64::<BigEndian>()?;
+        Ok(ConnectResponse::Payload(ConnectResponsePayload {
+            action: action,
+            connection_id: connection_id,
+            transaction_id: recv_transaction_id,
+        }))
+    } else if action == ACTION_ERROR {
+        assert!(nread >= 8);
+        let mut error_vec = vec![0u8; nread - 8];
+        std::io::Read::read_exact(&mut reader, &mut error_vec).unwrap();
+        let error_string = String::from_utf8_lossy(&error_vec).to_string();
+        Ok(ConnectResponse::Error(error_string))
+    } else {
+        Err(Error::IncorrectAction)
+    }
 }
 
 fn get_announce_request(
@@ -302,7 +338,7 @@ fn get_announce_request(
     writer.write_i32::<BigEndian>(EVENT_STARTED).unwrap(); // event
     writer.write_u32::<BigEndian>(0).unwrap(); // ip
     writer.write_u32::<BigEndian>(get_random_key()).unwrap(); // key
-    writer.write_i32::<BigEndian>(-1).unwrap(); // num_want
+    writer.write_i32::<BigEndian>(30).unwrap(); // num_want
     writer.write_u16::<BigEndian>(listening_port).unwrap(); // port
     writer.write_u16::<BigEndian>(0).unwrap(); // extensions
     writer
@@ -339,12 +375,20 @@ fn read_announce_response(
         };
         Ok(AnnounceResponse::Payload(res))
     } else if action == ACTION_ERROR {
-        let mut error_vec = vec![];
-        std::io::Read::read_to_end(&mut reader, &mut error_vec).unwrap();
+        let mut error_vec = vec![0u8; bytes_read - 8];
+        std::io::Read::read_exact(&mut reader, &mut error_vec).unwrap();
         let error_string = String::from_utf8_lossy(&error_vec).to_string();
         Ok(AnnounceResponse::Error(error_string))
     } else {
         error!("Received invalid action {}", action);
         Err(std::io::Error::new(std::io::ErrorKind::Other, ""))
     }
+}
+
+fn get_scrape_request(connection_id: i64, transaction_id: i32) -> Vec<u8> {
+    let mut writer = vec![];
+    writer.write_i64::<BigEndian>(connection_id).unwrap(); // connection_id
+    writer.write_i32::<BigEndian>(ACTION_SCRAPE).unwrap(); // action
+    writer.write_i32::<BigEndian>(transaction_id).unwrap(); // transaction_id
+    writer
 }
