@@ -213,11 +213,13 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         }
     }
 
-    fn deserialize_bool<V>(self, _visitor: V) -> Result<V::Value>
+    fn deserialize_bool<V>(self, visitor: V) -> Result<V::Value>
     where
         V: Visitor<'de>,
     {
-        unimplemented!();
+        trace!("Deserializing bool");
+        let num = self.parse_bencoding_num_unsigned::<u32>()?;
+        visitor.visit_bool(num != 0)
     }
 
     fn deserialize_i8<V>(self, visitor: V) -> Result<V::Value>

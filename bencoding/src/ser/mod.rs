@@ -54,48 +54,48 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     type SerializeStructVariant = Self;
 
     fn serialize_bool(self, v: bool) -> Result<()> {
-        trace!("Serializing bool");
+        trace!("Serializing bool: {}", v);
         self.serialize_i64(i64::from(v))
     }
 
     fn serialize_i8(self, v: i8) -> Result<()> {
-        trace!("Serializing i8");
+        trace!("Serializing i8: {}", v);
         self.serialize_i64(i64::from(v))
     }
 
     fn serialize_i16(self, v: i16) -> Result<()> {
-        trace!("Serializing i16");
+        trace!("Serializing i16: {}", v);
         self.serialize_i64(i64::from(v))
     }
 
     fn serialize_i32(self, v: i32) -> Result<()> {
-        trace!("Serializing i32");
+        trace!("Serializing i32: {}", v);
         self.serialize_i64(i64::from(v))
     }
 
     fn serialize_i64(self, v: i64) -> Result<()> {
         // TODO: probably not that efficient
-        trace!("Serializing i64");
+        trace!("Serializing i64: {}", v);
         Ok(utils::write_integer(&mut self.output, v))
     }
 
     fn serialize_u8(self, v: u8) -> Result<()> {
-        trace!("Serializing u8");
+        trace!("Serializing u8: {}", v);
         self.serialize_u64(u64::from(v))
     }
 
     fn serialize_u16(self, v: u16) -> Result<()> {
-        trace!("Serializing u16");
+        trace!("Serializing u16: {}", v);
         self.serialize_u64(u64::from(v))
     }
 
     fn serialize_u32(self, v: u32) -> Result<()> {
-        trace!("Serializing u32");
+        trace!("Serializing u32: {}", v);
         self.serialize_u64(u64::from(v))
     }
 
     fn serialize_u64(self, v: u64) -> Result<()> {
-        trace!("Serializing u64");
+        trace!("Serializing u64: {}", v);
         Ok(utils::write_unsigned(&mut self.output, v))
     }
 
@@ -108,7 +108,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
     }
 
     fn serialize_char(self, v: char) -> Result<()> {
-        trace!("Serializing char");
+        trace!("Serializing char: {}", v);
         self.serialize_str(&v.to_string())
     }
 
@@ -230,8 +230,8 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         Ok(self)
     }
 
-    fn serialize_struct(self, _name: &'static str, len: usize) -> Result<Self::SerializeStruct> {
-        trace!("Serializing struct");
+    fn serialize_struct(self, name: &'static str, len: usize) -> Result<Self::SerializeStruct> {
+        trace!("Serializing struct: {}", name);
         self.serialize_map(Some(len))
     }
 
@@ -244,8 +244,7 @@ impl<'a> ser::Serializer for &'a mut Serializer {
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStructVariant> {
-        trace!("Serializing struct variant, {}", variant);
-        println!("Serializing struct variant, {}", variant);
+        trace!("Serializing struct variant: {}", variant);
         self.output.write(b"d").unwrap();
         variant.serialize(&mut *self)?;
         self.serialize_map(Some(len))
@@ -340,6 +339,7 @@ impl<'a> ser::SerializeMap for &'a mut Serializer {
 
         self.current_key = vec![];
         std::mem::swap(&mut self.current_key, &mut self.output);
+        assert!(self.output.is_empty());
         Ok(())
     }
 
@@ -363,6 +363,11 @@ impl<'a> ser::SerializeMap for &'a mut Serializer {
         let mut val = vec![];
         std::mem::swap(&mut self.output, &mut val);
 
+        trace!(
+            "[map] adding key val: {} -> {}",
+            String::from_utf8_lossy(&key),
+            String::from_utf8_lossy(&val)
+        );
         self.ordered_pairs.push((key, val));
         Ok(())
     }
@@ -370,6 +375,10 @@ impl<'a> ser::SerializeMap for &'a mut Serializer {
     fn end(self) -> Result<Self::Ok> {
         self.switch_to_original_buffer();
         write_dict_with_ordered_pairs(&mut self.ordered_pairs, &mut self.output)?;
+        trace!(
+            "[map] original buffer: {}",
+            String::from_utf8_lossy(&self.output),
+        );
         Ok(())
     }
 }
@@ -382,6 +391,7 @@ impl<'a> ser::SerializeStruct for &'a mut Serializer {
     where
         T: ?Sized + Serialize,
     {
+        trace!("[struct] serializing field named {}", key);
         key.serialize(&mut **self)?;
         let mut serialized_key = vec![];
         std::mem::swap(&mut serialized_key, &mut self.output);
@@ -390,13 +400,28 @@ impl<'a> ser::SerializeStruct for &'a mut Serializer {
         let mut serialized_value = vec![];
         std::mem::swap(&mut serialized_value, &mut self.output);
 
-        self.ordered_pairs.push((serialized_key, serialized_value));
+        if serialized_value.len() != 0 {
+            // If the value is not empty we write as an ordered pair
+            trace!(
+                "[struct] adding key val: {} -> {}",
+                String::from_utf8_lossy(&serialized_key),
+                String::from_utf8_lossy(&serialized_value)
+            );
+
+            self.ordered_pairs.push((serialized_key, serialized_value));
+        }
+
+        assert!(self.output.is_empty());
         Ok(())
     }
 
     fn end(self) -> Result<()> {
         self.switch_to_original_buffer();
         write_dict_with_ordered_pairs(&mut self.ordered_pairs, &mut self.output)?;
+        trace!(
+            "[struct] original buffer: {}",
+            String::from_utf8_lossy(&self.output),
+        );
         Ok(())
     }
 }
@@ -417,7 +442,14 @@ impl<'a> ser::SerializeStructVariant for &'a mut Serializer {
         let mut serialized_value = vec![];
         std::mem::swap(&mut serialized_value, &mut self.output);
 
-        self.ordered_pairs.push((serialized_key, serialized_value));
+        if serialized_value.len() != 0 {
+            trace!(
+                "[struct_variant] adding key val: {} -> {}",
+                String::from_utf8_lossy(&serialized_key),
+                String::from_utf8_lossy(&serialized_value)
+            );
+            self.ordered_pairs.push((serialized_key, serialized_value));
+        }
         Ok(())
     }
 
@@ -425,6 +457,10 @@ impl<'a> ser::SerializeStructVariant for &'a mut Serializer {
         self.switch_to_original_buffer();
         write_dict_with_ordered_pairs(&mut self.ordered_pairs, &mut self.output)?;
         self.output.write(b"e").unwrap();
+        trace!(
+            "[struct_variant] original buffer: {}",
+            String::from_utf8_lossy(&self.output),
+        );
         Ok(())
     }
 }
@@ -538,6 +574,59 @@ fn test_enum_serialization() {
         };
         let expected = "d12:StructSortedd3:abci1024e3:pppi1e4:uiui11:temp_stringee";
         let bytes = to_bytes(&s).unwrap();
+        assert_eq!(unsafe { str::from_utf8_unchecked(&bytes) }, expected);
+    }
+}
+
+#[test]
+fn test_option_serialization() {
+    use std::str;
+
+    #[derive(Serialize)]
+    struct S {
+        string_field: String,
+        other_field: Vec<String>,
+        another_field: Option<String>,
+    }
+
+    {
+        let s = S {
+            another_field: None,
+            string_field: "abcdef".to_owned(),
+            other_field: vec![],
+        };
+        let bytes = to_bytes(&s).unwrap();
+        let expected = "d11:other_fieldle12:string_field6:abcdefe";
+        assert_eq!(unsafe { str::from_utf8_unchecked(&bytes) }, expected);
+    }
+}
+
+#[test]
+fn test_nested_struct_serialization() {
+    use std::str;
+
+    #[derive(Serialize)]
+    struct N {
+        field1: u32,
+        field2: i64,
+    }
+
+    #[derive(Serialize)]
+    struct S {
+        string_field: String,
+        nested_field: N,
+    }
+
+    {
+        let s = S {
+            nested_field: N {
+                field1: 20,
+                field2: 64,
+            },
+            string_field: "abcdef".to_owned(),
+        };
+        let bytes = to_bytes(&s).unwrap();
+        let expected = "d12:nested_fieldd6:field1i20e6:field2i64ee12:string_field6:abcdefe";
         assert_eq!(unsafe { str::from_utf8_unchecked(&bytes) }, expected);
     }
 }
