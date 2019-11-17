@@ -7,6 +7,8 @@ extern crate tokio;
 
 pub mod error;
 pub mod model;
+mod peer;
 pub mod tracker;
 
+pub use error::Error;
 pub use model::{FileInfo, InfoDict, MetaInfo};

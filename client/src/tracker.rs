@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::model::InfoDict;
+use crate::peer::Peer;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use log::{debug, error, info, warn};
 use rand::Rng;
@@ -43,29 +44,6 @@ struct ConnectResponsePayload {
 enum ConnectResponse {
     Payload(ConnectResponsePayload),
     Error(String),
-}
-
-#[derive(Debug)]
-pub struct Peer {
-    ip: u32,
-    port: u16,
-}
-
-impl std::fmt::Display for Peer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let first = (self.ip as u32) >> 24;
-        let second = ((self.ip as u32) & 0b00000000_11111111_00000000_00000000) >> 16;
-        let third = ((self.ip as u32) & 0b00000000_00000000_11111111_00000000) >> 8;
-        let fourth = (self.ip as u32) & 0b00000000_00000000_00000000_11111111;
-        write!(f, "{}.{}.{}.{}:{}", first, second, third, fourth, self.port)
-    }
-}
-
-impl Peer {
-    fn size() -> usize {
-        use std::mem::size_of;
-        size_of::<u32>() + size_of::<u16>()
-    }
 }
 
 #[derive(Debug)]
@@ -188,6 +166,11 @@ impl Connection {
 fn get_hashed_info_dict(info_dict: &InfoDict) -> Vec<u8> {
     let info_dict_bytes =
         bencoding::to_bytes(info_dict).expect("info dict should not fail to encode");
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create("rust_myfile").unwrap();
+        f.write_all(&info_dict_bytes).unwrap();
+    }
 
     let mut hasher = sha1::Sha1::default();
     hasher.input(info_dict_bytes);

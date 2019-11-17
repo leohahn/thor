@@ -8,6 +8,7 @@ pub enum Error {
     IncorrectTransactionId,
     IncorrectAction,
     Timeout,
+    AddrParsing(std::net::AddrParseError),
     Server(String),
 }
 
@@ -19,6 +20,7 @@ impl std::error::Error for Error {
             Error::IncorrectTransactionId => "incorrect transaction id",
             Error::IncorrectAction => "incorrect action",
             Error::Timeout => "timeout",
+            Error::AddrParsing(ref e) => e.description(),
             Error::Server(_) => "error from server",
         }
     }
@@ -30,6 +32,7 @@ impl std::error::Error for Error {
             Error::IncorrectTransactionId => None,
             Error::IncorrectAction => None,
             Error::Timeout => None,
+            Error::AddrParsing(ref e) => Some(e),
             Error::Server(_) => None,
         }
     }
@@ -43,6 +46,7 @@ impl fmt::Display for Error {
             Error::IncorrectTransactionId => write!(f, "incorrect transaction id"),
             Error::IncorrectAction => write!(f, "incorrect action"),
             Error::Timeout => write!(f, "timeout"),
+            Error::AddrParsing(ref e) => write!(f, "addr parsing: {}", e),
             Error::Server(ref s) => write!(f, "server: {}", s),
         }
     }
@@ -51,5 +55,11 @@ impl fmt::Display for Error {
 impl From<tokio::io::Error> for Error {
     fn from(err: tokio::io::Error) -> Error {
         Error::Tokio(err)
+    }
+}
+
+impl From<std::net::AddrParseError> for Error {
+    fn from(err: std::net::AddrParseError) -> Error {
+        Error::AddrParsing(err)
     }
 }

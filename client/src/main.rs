@@ -1,5 +1,6 @@
 extern crate bencoding;
 extern crate env_logger;
+extern crate futures_util;
 extern crate serde;
 extern crate sha1;
 extern crate thor;
@@ -7,37 +8,55 @@ extern crate tokio;
 
 use std::io::Read;
 use std::net::{SocketAddr, ToSocketAddrs};
+use tokio::future::Future;
 use tokio::net::TcpStream;
 
 async fn peer_connection(addr: String) {
-    println!("ASOIDJOIASJD");
     let socket_addr: SocketAddr = addr.parse().unwrap();
     let socket = TcpStream::connect(&socket_addr).await.unwrap();
 }
 
 async fn make_tracker_request(meta_info: &thor::MetaInfo) -> Result<(), String> {
+    println!("announce: {}", meta_info.announce);
+    println!("announce_list: {:?}", meta_info.announce_list);
+
+    // TODO: add support for the multi tracker extension
+
     if meta_info.announce.starts_with("udp://") {
-        let (_, url) = meta_info.announce.split_at("udp://".len());
+        let (_, mut url) = meta_info.announce.split_at("udp://".len());
+
+        if let Some(index) = url.rfind('/') {
+            let (u, _) = url.split_at(index);
+            url = u;
+        }
+
         println!("url is: {}", url);
 
-        let address_str = "tracker.leechers-paradise.org:6969";
-        let mut addrs_iter = address_str.to_socket_addrs().unwrap();
-
+        let mut addrs_iter = url.to_socket_addrs().unwrap();
         if let Some(addr) = addrs_iter.next() {
             println!("resolved to ip {}", addr);
             let mut connection = thor::tracker::Connection::new(addr).await.unwrap();
             let res = connection.announce(&meta_info.info).await.unwrap();
-            for peer in res.peers.iter() {
-                let addr = peer.to_string();
-                println!("will connect to peer at {}", addr);
-                tokio::spawn(async move { peer_connection(addr).await });
+
+            // TODO: use stable rust, since async await is already supported.
+
+            for peer in res.peers {
+                tokio::spawn(async move {
+                    match peer.start_connection().await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            println!("connection with peer failed: {}", e);
+                        }
+                    };
+                });
             }
 
+            // TODO: pass channel to peer connections in order to manage and wait for them
             loop {}
-            // Now, create the peer tcp connections
+
             Ok(())
         } else {
-            Err(format!("failed to resolve address {}", address_str))
+            Err(format!("failed to resolve address {}", url))
         }
     } else {
         Err("Currently only UDP is supported for trackers".to_owned())
@@ -49,6 +68,22 @@ async fn main() -> Result<(), String> {
     env_logger::init();
 
     let torrent_file = std::env::args().nth(1).unwrap();
+
+    {
+        use sha1::Digest;
+        let mut file = std::fs::File::open(&torrent_file).unwrap();
+        let mut buf = vec![];
+        file.read_to_end(&mut buf).unwrap();
+
+        let mut hasher = sha1::Sha1::default();
+        hasher.input(&buf);
+
+        let bytes = &hasher.result();
+        assert!(bytes.len() == 20);
+
+        println!(":D info_hash: {:02x}", &bytes);
+    }
+
     println!("Will parse torrent file {}", torrent_file);
 
     let mut torrent_file_bytes = vec![];
@@ -75,6 +110,12 @@ async fn main() -> Result<(), String> {
     } else {
         println!("File to download = {}", meta_info.info.name);
     }
+
+    println!("info dict: {:?}", meta_info.info);
+    println!(
+        "info dict bencoded: {}",
+        String::from_utf8_lossy(&bencoding::to_bytes(&meta_info.info).unwrap())
+    );
 
     make_tracker_request(&meta_info).await
 }
