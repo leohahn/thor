@@ -109,11 +109,11 @@ impl Connection {
 
         Ok(())
     }
+}
 
-    pub async fn announce(
-        &mut self,
-        info_dict: &InfoDict,
-    ) -> Result<AnnounceResponsePayload, Error> {
+#[async_trait]
+impl TrackerClient for Connection {
+    async fn announce(&mut self, info_dict: &InfoDict) -> Result<AnnounceResponsePayload, Error> {
         let hashed_info_dict = get_hashed_info_dict(info_dict);
         let transaction_id = get_transaction_id();
         let peer_id = get_peer_id();
