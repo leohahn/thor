@@ -1,19 +1,11 @@
-extern crate bencoding;
-extern crate env_logger;
-extern crate futures_util;
-extern crate serde;
-extern crate sha1;
-extern crate thor;
-extern crate tokio;
-
 use std::io::Read;
-use std::net::{SocketAddr, ToSocketAddrs};
-use tokio::net::TcpStream;
+use std::net::ToSocketAddrs;
+// use tokio::net::TcpStream;
 
-async fn peer_connection(addr: String) {
-    let socket_addr: SocketAddr = addr.parse().unwrap();
-    let socket = TcpStream::connect(&socket_addr).await.unwrap();
-}
+// async fn peer_connection(addr: String) {
+//     let socket_addr: SocketAddr = addr.parse().unwrap();
+//     let socket = TcpStream::connect(&socket_addr).await.unwrap();
+// }
 
 async fn make_tracker_request(meta_info: &thor::MetaInfo) -> Result<(), String> {
     println!("announce: {}", meta_info.announce);
@@ -37,8 +29,6 @@ async fn make_tracker_request(meta_info: &thor::MetaInfo) -> Result<(), String> 
             let mut connection = thor::tracker::Connection::new(addr).await.unwrap();
             let res = connection.announce(&meta_info.info).await.unwrap();
 
-            // TODO: use stable rust, since async await is already supported.
-
             for peer in res.peers {
                 tokio::spawn(async move {
                     match peer.start_connection().await {
@@ -53,7 +43,7 @@ async fn make_tracker_request(meta_info: &thor::MetaInfo) -> Result<(), String> 
             // TODO: pass channel to peer connections in order to manage and wait for them
             loop {}
 
-            Ok(())
+        // Ok(())
         } else {
             Err(format!("failed to resolve address {}", url))
         }
@@ -111,10 +101,10 @@ async fn main() -> Result<(), String> {
     }
 
     println!("info dict: {:?}", meta_info.info);
-    println!(
-        "info dict bencoded: {}",
-        String::from_utf8_lossy(&bencoding::to_bytes(&meta_info.info).unwrap())
-    );
+    // println!(
+    //     "info dict bencoded: {}",
+    //     String::from_utf8_lossy(&bencoding::to_bytes(&meta_info.info).unwrap())
+    // );
 
     make_tracker_request(&meta_info).await
 }

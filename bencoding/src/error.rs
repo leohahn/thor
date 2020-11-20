@@ -2,22 +2,51 @@ use std::fmt;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum Error {
+    #[error("{0}")]
     Message(String),
+
+    #[error("unexpected end of input")]
     Eof,
+
+    #[error("invalid syntax")]
     Syntax,
+
+    #[error("trailing characters")]
     TrailingCharacters,
+
+    #[error("expected integer")]
     ExpectedInteger,
+
+    #[error("expected end of integer")]
     ExpectedIntegerEnd,
+
+    #[error("expected byte string")]
     ExpectedByteString,
+
+    #[error("expected char")]
     ExpectedChar,
+
+    #[error("expected string")]
     ExpectedString,
+
+    #[error("expected list")]
     ExpectedList,
+
+    #[error("expected map")]
     ExpectedMap,
+
+    #[error("expected end of map")]
     ExpectedMapEnd,
+
+    #[error("expected end of array")]
     ExpectedArrayEnd,
+
+    #[error("expected enum")]
     ExpectedEnum,
+
+    #[error("expected list or bytes")]
     ExpectedSequence,
 }
 
@@ -30,33 +59,5 @@ impl serde::ser::Error for Error {
 impl serde::de::Error for Error {
     fn custom<T: fmt::Display>(msg: T) -> Self {
         Error::Message(msg.to_string())
-    }
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        formatter.write_str(std::error::Error::description(self))
-    }
-}
-
-impl std::error::Error for Error {
-    fn description(&self) -> &str {
-        match *self {
-            Error::Message(ref msg) => msg,
-            Error::Eof => "unexpected end of input",
-            Error::Syntax => "invalid syntax",
-            Error::TrailingCharacters => "trailing characters",
-            Error::ExpectedInteger => "expected integer",
-            Error::ExpectedIntegerEnd => "expected end of integer",
-            Error::ExpectedByteString => "expected byte string",
-            Error::ExpectedChar => "expected char",
-            Error::ExpectedString => "expected string",
-            Error::ExpectedList => "expected list",
-            Error::ExpectedMap => "expected map",
-            Error::ExpectedMapEnd => "expected end of map",
-            Error::ExpectedArrayEnd => "expected end of array",
-            Error::ExpectedEnum => "expected enum",
-            Error::ExpectedSequence => "expected list or bytes",
-        }
     }
 }

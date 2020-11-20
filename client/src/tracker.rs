@@ -1,8 +1,9 @@
 use crate::error::Error;
 use crate::model::InfoDict;
 use crate::peer::Peer;
+use async_trait::async_trait;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
 use rand::Rng;
 use sha1::Digest;
 use std::net::SocketAddr;
@@ -20,10 +21,16 @@ const ACTION_ANNOUNCE: i32 = 1;
 const ACTION_SCRAPE: i32 = 2;
 const ACTION_ERROR: i32 = 3;
 
-const EVENT_NONE: i32 = 0;
-const EVENT_COMPLETED: i32 = 1;
+// const EVENT_NONE: i32 = 0;
+// const EVENT_COMPLETED: i32 = 1;
 const EVENT_STARTED: i32 = 2;
-const EVENT_STOPPED: i32 = 3;
+// const EVENT_STOPPED: i32 = 3;
+
+#[async_trait]
+pub trait TrackerClient {
+    /// Allows the user to announce its existence to the tracker that this client represents.
+    async fn announce(&mut self, info_dict: &InfoDict) -> Result<AnnounceResponsePayload, Error>;
+}
 
 #[derive(Debug)]
 pub struct Connection {
