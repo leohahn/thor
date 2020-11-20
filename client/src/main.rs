@@ -8,7 +8,6 @@ extern crate tokio;
 
 use std::io::Read;
 use std::net::{SocketAddr, ToSocketAddrs};
-use tokio::future::Future;
 use tokio::net::TcpStream;
 
 async fn peer_connection(addr: String) {
@@ -75,10 +74,10 @@ async fn main() -> Result<(), String> {
         let mut buf = vec![];
         file.read_to_end(&mut buf).unwrap();
 
-        let mut hasher = sha1::Sha1::default();
-        hasher.input(&buf);
+        let mut hasher = sha1::Sha1::new();
+        hasher.update(&buf);
 
-        let bytes = &hasher.result();
+        let bytes = &hasher.finalize();
         assert!(bytes.len() == 20);
 
         println!(":D info_hash: {:02x}", &bytes);

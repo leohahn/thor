@@ -10,7 +10,7 @@ use std::ops::RangeInclusive;
 use std::time::Duration;
 use tokio::io;
 use tokio::net::UdpSocket;
-use tokio::prelude::*;
+use tokio::time::timeout;
 
 const MAGIC_CONSTANT: i64 = 0x41727101980;
 const RECV_BUF_SIZE: usize = 1024;
@@ -90,10 +90,7 @@ impl Connection {
         self.socket.send(&scrape_req).await?;
         let mut buf = [0u8; RECV_BUF_SIZE];
 
-        let len = self
-            .socket
-            .recv(&mut buf)
-            .timeout(Duration::from_secs(2))
+        let len = timeout(Duration::from_secs(2), self.socket.recv(&mut buf))
             .await
             .map_err(|e| {
                 error!("attempt to receive announce response timed out: {}", e);
@@ -124,10 +121,7 @@ impl Connection {
         self.socket.send(&announce_req).await?;
         let mut buf = [0u8; RECV_BUF_SIZE];
 
-        let len = self
-            .socket
-            .recv(&mut buf)
-            .timeout(Duration::from_secs(2))
+        let len = timeout(Duration::from_secs(2), self.socket.recv(&mut buf))
             .await
             .map_err(|e| {
                 error!("attempt to receive announce response timed out: {}", e);
@@ -172,10 +166,10 @@ fn get_hashed_info_dict(info_dict: &InfoDict) -> Vec<u8> {
         f.write_all(&info_dict_bytes).unwrap();
     }
 
-    let mut hasher = sha1::Sha1::default();
-    hasher.input(info_dict_bytes);
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(info_dict_bytes);
 
-    let bytes = &hasher.result();
+    let bytes = &hasher.finalize();
     assert!(bytes.len() == 20);
 
     debug!("info_hash: {:02x}", &bytes);
@@ -211,9 +205,7 @@ async fn connect(socket: &mut UdpSocket) -> Result<i64, Error> {
 
     let mut buf = [0u8; RECV_BUF_SIZE];
 
-    let len = socket
-        .recv(&mut buf)
-        .timeout(Duration::from_secs(2))
+    let len = timeout(Duration::from_secs(2), socket.recv(&mut buf))
         .await
         .map_err(|e| {
             error!("attempt to connect timed out: {}", e);
